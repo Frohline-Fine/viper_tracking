@@ -1,50 +1,43 @@
 
-from input_tracker import start_input_tracker
-from window_tracker import start_window_tracker, init_all_labels_from_db
-from gui_handler import start_root_gui, init_root_gui
-from system_tray_handler import start_systray_icon
-from config_manager import initialize_config_manager, get_logger
 
+import ttkbootstrap as tb
+from input_tracker import start as input_start, stop as input_stop
+from window_tracker import start as tracking_start, stop as tracking_stop, setup_labels
+import input_tracker
+import window_tracker
 
-# TODO: in english
+# TODO:
 #   wenn was hinzugefügt, dann update des tracking threads/microservies/Prozess
 #   Auswertungen müssen per label, fenster typ, nach text suche, text/word segments
 #   oder irgendeiner kombnation dieser machbar sein
 #   Advanced conditions, wie z.B. wenn anwendung A hauptfenster & Anwendung B im Hintergrund, dann setz label
 
-def start_program() -> None:
+def start() -> None:
     """
     The function to start all needed application modules.
     :return: None
     """
-# FIXME: also icon not accepted in ttkb windows?
+    # First get the Label elements from the DB, needs to be called here once,
+    # because the start function will be called in between on changes.
+    setup_labels()
+    # start thread for tracking mouse and keyboard signals (only counting & timestamp)
+    input_start()
+    # start the thread for reading windows
+    tracking_start()
 
-    get_logger().info("Logger started")
-    initialize_config_manager()
-    get_logger().info("config_manager started")
-    init_all_labels_from_db()
-    get_logger().info("imported Labels from DB")
+    root_window = tb.Window()
+    root_window.geometry(f"{300}x{100}+{100}+{100}")
+    root_window.grid_rowconfigure(0, weight=1)
+    root_window.grid_columnconfigure(0, weight=1)
 
-    init_root_gui()
-    get_logger().info("init root gui")
+    # TODO: If there is a setting change, stop & start again the threads.
+    root_window.mainloop()
 
-    start_input_tracker()
-    get_logger().info("started input tracker")
-
-    start_window_tracker()
-    get_logger().info("started window tracker")
-
-    start_systray_icon()
-    get_logger().info("started systray icon")
-    get_logger().info("start gui main loop")
-    start_root_gui()
-    get_logger().info("end root gui")
-    print("Main loop properly finished")  # FIXME: shows only if destroy is used, if quit is used we wont see this
-
-
-    # TODO: termination process handeling, like on errors
-
+    # TODO: termination process handeling
+    # Stop the inputmanager & window tracker thread if the program gets terminated
+    tracking_stop()
+    input_stop()
 
 
 if __name__ == "__main__":
-    start_program()
+    start()
