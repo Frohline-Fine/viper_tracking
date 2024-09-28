@@ -2,21 +2,25 @@
 This module will write & read data from/into a MongoDB database.
 Authors: Sora_7672 and Vulnona
 """
+# TODO: Probably need to safe close the db connection on program exit, depends on DB i guess
 
 from pymongo import MongoClient
 from typing import Optional
-import os
+from os import getenv
 
-mongodb_host = os.getenv('MONGODB_HOST', 'localhost')
-mongodb_port = int(os.getenv('MONGODB_PORT', 27017))
+mongodb_host = getenv('MONGODB_HOST', 'localhost')
+mongodb_port = int(getenv('MONGODB_PORT', 27017))
 
 # Init the connection
 try:
     m_client = MongoClient(mongodb_host, mongodb_port)
     m_db = m_client.viper_tracking
-except errors.ConnectionError as e:
-    print(f"Could not connect to MongoDB: {e}")
+except MongoClient.errors as err:
+    print(f"Could not connect to MongoDB: {err}")
     
+
+# # # # # Window tracker input # # # #
+
 
 def add_window_dict(window_dict: dict) -> Optional[str]:
     """
@@ -32,13 +36,17 @@ def add_window_dict(window_dict: dict) -> Optional[str]:
         return None
 
 
+# # # # Analyzing getter functions # # # #
+
+
 def get_window_dict_list_by_label(label: str) -> list[dict]:
     """
     This function will return a list of window dictionaries based on a label.
     :param label: str
     :return: list[dict]
     """
-    return list(m_db.window_collection.find({"label": label}).collation({"locale": "en", "strength": 2}))
+    return list(m_db.window_collection.find({"label": label}).collation({"locale": "en", "strength": 2})
+                .sort("timestamp"))
 
 
 def get_window_dict_list_by_time_window(start_time: float, end_time: float) -> list[dict]:
@@ -48,7 +56,7 @@ def get_window_dict_list_by_time_window(start_time: float, end_time: float) -> l
     :param end_time: timestamp float
     :return:
     """
-    return list(m_db.window_collection.find({"timestamp": {"$gte": start_time, "$lte": end_time}}))
+    return list(m_db.window_collection.find({"timestamp": {"$gte": start_time, "$lte": end_time}}).sort("timestamp"))
 
 
 def get_window_dict_list_by_window_type(*window_types: str) -> list[dict]:
@@ -57,7 +65,7 @@ def get_window_dict_list_by_window_type(*window_types: str) -> list[dict]:
     :param window_types: str | str, str, ...
     :return: list[dict]
     """
-    return list(m_db.window_collection.find({"window_type": {"$in": window_types}})
+    return list(m_db.window_collection.find({"window_type": {"$in": window_types}}).sort("timestamp")
                 .collation({"locale": "en", "strength": 2}))
 
 
@@ -67,28 +75,61 @@ def get_window_dict_list_by_words(*words: str) -> list[dict]:
     :param words: str | str, str, ...
     :return:
     """
-    return list(m_db.window_collection.find({"window_text_words": {"$in": words}})
+    return list(m_db.window_collection.find({"window_text_words": {"$in": words}}).sort("timestamp")
                 .collation({"locale": "en", "strength": 2}))
 
+
+# # # # Save and read inputs infos in own collection # # # #
+
+def add_input_infos(input_dict: dict):
+    m_db.input_collection.insert_one(input_dict)
+
+def get_input_infos_by_id(input_id) -> dict:
+    return m_db.input_collection.find_one({"_id": input_id})
+
+def get_input_infos_by_timeframe(start_time: float, end_time: float) -> list[dict]:
+    """
+    This function will return a list of window dictionaries based on a time window.
+    :param start_time: timestamp float
+    :param end_time: timestamp float
+    :return:
+    """
+    return list(m_db.input_collection.find({"timestamp": {"$gte": start_time, "$lte": end_time}}).sort("timestamp"))
+
+# TODO: other getters from input
+def get_input_infos_by_activity():
+    pass
+
+
+
+
+
+# # # #  Mixed usage, initial setup of labels and other uses # # # #
 
 def get_label_list() -> list[dict]:
     """
     This function will return a list of all labels in the MongoDB database.
     :return: list[dict]
     """
-    return list(m_db.label_collection.find())
+    return list(m_db.label_collection.find().sort("timestamp"))
 
+
+
+# # # # Changes in collection of labels # # # #
 
 def add_label(label_dict: dict):
     """
     This function will add a label dictionary to the MongoDB database.
+    returns the inserted id
     :param label_dict:
     :return:
     """
+    if "_id" in label_dict.keys():
+        raise Exception("db_connector.add_label works only without '_id' in dict!")
     return m_db.label_collection.insert_one(label_dict).inserted_id
 
 
-def update_label(label_dict: dict) -> Optional[str]:
+def update_label(label_dict: dict) -> None:
     """
     This function will update a label dictionary in the MongoDB database.
     :param label_dict: dict
@@ -96,22 +137,30 @@ def update_label(label_dict: dict) -> Optional[str]:
     """
     if "_id" in label_dict and label_dict["_id"] is not None:
         result = m_db.label_collection.find_one_and_update(
-            {"$and": [{"name": label_dict["name"]}, {"_id": label_dict["_id"]}]},
+            {"_id": label_dict["_id"]},
             {"$set": label_dict}
         )
-        return label_dict["_id"] if result else None
+        if result is None:
+            raise Warning(f"Could not update label. Not found: _id={label_dict['_id']}")
+
     else:
-        label_dict.pop("_id", None)
-        return add_label(label_dict)
+        raise Warning(f"Could not update label. _id is not set!")
 
 
-def delete_label(label_dict: dict) -> None:
+def delete_label(label_id) -> None:
     """
-    This function will delete a label dictionary from the MongoDB database.
-    :param label_dict:
+    This function will delete a label by id from the MongoDB Label Collection.
+    :param label_id:
     :return: None
     """
-    m_db.label_collection.delete_one({"$and": [{"name": label_dict["name"]}, {"_id": label_dict["id"]}]})
+    result = m_db.label_collection.find_one_and_delete({{"_id": label_id}})
+    if result is None:
+        raise Warning(f"Could not delete label.[_id={label_id}]")
+
+
+# TODO: do what is needed to close the db connection properly
+def close_db_connection():
+    m_client.close()
 
 
 if __name__ == "__main__":
